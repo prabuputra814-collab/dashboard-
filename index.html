@@ -1,0 +1,90 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Realtime</title><style>
+*{box-sizing:border-box}
+body{margin:0;background:#000;color:#ff9f1a;font-family:monospace;font-size:12px;padding:6px}
+.bar{background:#ff9f1a;color:#000;font-weight:bold;padding:5px 8px;display:flex;justify-content:space-between}
+.pn{border:1px solid #4a3000;margin-top:6px}
+.ph{background:#1a1000;padding:3px 8px;font-size:10px;border-bottom:1px solid #4a3000;letter-spacing:1px}
+.row{display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid #1a1200;transition:background .3s}
+.k{font-weight:bold;color:#fff;font-size:14px}
+.p{font-size:16px;font-weight:bold;color:#fff;text-align:right}
+.p small{display:block;font-size:11px}
+.up{color:#00d26a!important}.dn{color:#ff3b30!important}
+.fu{background:#0d2a18}.fd{background:#2e1010}
+.t{display:flex;justify-content:space-between;padding:3px 8px;border-bottom:1px solid #1a1200;font-size:11px}
+svg{display:block;width:100%}
+.ft{color:#6b4a00;font-size:10px;padding:8px 2px}
+</style></head><body>
+<div class="bar"><span>REALTIME &lt;LIVE&gt;</span><span id="st">menyambung...</span></div>
+<div class="pn"><div class="ph">HARGA LIVE (WEBSOCKET)</div><div id="coins"></div></div>
+<div class="pn"><div class="ph">BTC/USDT 1M</div>
+<svg viewBox="0 0 340 110"><polyline id="ln" fill="none" stroke="#ff9f1a" stroke-width="1.6"/></svg></div>
+<div class="pn"><div class="ph">TRADE TAPE BTC</div><div id="tape"></div></div>
+<div class="ft">Data publik Binance, push langsung ke browser. Bukan saran keuangan.</div>
+<script>
+const C=["btcusdt","ethusdt","bnbusdt","solusdt","xrpusdt","dogeusdt"];
+const SR=C.map(s=>s+"@ticker").concat(["btcusdt@aggTrade","btcusdt@kline_1m"]).join("/");
+const WS=["wss://stream.binance.com:9443","wss://data-stream.binance.vision"];
+const REST=["https://api.binance.com","https://data-api.binance.vision"];
+const $=id=>document.getElementById(id);
+const fmt=p=>p>=100?p.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):p>=1?p.toFixed(3):p.toFixed(5);
+let hi=0,candles=[],tape=[],coin={},prev={};
+
+$("coins").innerHTML=C.map(s=>`<div class="row" id="r-${s}"><div class="k">${s.replace("usdt","").toUpperCase()}</div><div class="p"><span id="p-${s}">-</span><small id="c-${s}">-</small></div></div>`).join("");
+
+async function history(){
+ for(const h of REST){
+  try{
+   const d=await (await fetch(h+"/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=60")).json();
+   candles=d.map(k=>({t:k[0],c:parseFloat(k[4])}));return;
+  }catch(e){}
+ }
+}
+
+function connect(){
+ const ws=new WebSocket(WS[hi]+"/stream?streams="+SR);
+ ws.onopen=()=>{$("st").textContent="● LIVE";$("st").className="up";$("st").style.color="#000"};
+ ws.onmessage=ev=>{
+  const m=JSON.parse(ev.data),d=m.data;
+  if(m.stream.endsWith("@ticker")){
+   coin[d.s.toLowerCase()]={p:parseFloat(d.c),c:parseFloat(d.P)};
+  }else if(m.stream.endsWith("@aggTrade")){
+   tape.unshift({t:new Date(d.T).toLocaleTimeString("id-ID"),p:parseFloat(d.p),q:parseFloat(d.q),sell:d.m});
+   tape=tape.slice(0,12);
+  }else if(m.stream.indexOf("@kline")>0){
+   const k=d.k,c=parseFloat(k.c),last=candles[candles.length-1];
+   if(last&&last.t===k.t)last.c=c;
+   else{candles.push({t:k.t,c:c});candles=candles.slice(-60)}
+  }
+ };
+ ws.onclose=()=>{
+  $("st").textContent="putus, menyambung ulang...";$("st").style.color="#000";
+  hi=(hi+1)%WS.length;setTimeout(connect,2000);
+ };
+ ws.onerror=()=>ws.close();
+}
+
+function render(){
+ for(const s of C){
+  const x=coin[s];if(!x)continue;
+  $("p-"+s).textContent=fmt(x.p);
+  const ce=$("c-"+s);
+  ce.textContent=(x.c>=0?"+":"")+x.c.toFixed(2)+"% (24j)";
+  ce.className=x.c>=0?"up":"dn";
+  $("p-"+s).className=x.c>=0?"up":"dn";
+  if(prev[s]!==undefined&&x.p!==prev[s]){
+   const r=$("r-"+s),k=x.p>prev[s]?"fu":"fd";
+   r.classList.add(k);setTimeout(()=>r.classList.remove(k),300);
+  }
+  prev[s]=x.p;
+ }
+ if(candles.length>1){
+  const a=candles.map(c=>c.c),lo=Math.min(...a),hi2=Math.max(...a);
+  $("ln").setAttribute("points",a.map((v,i)=>(i/(a.length-1)*340).toFixed(1)+","+(106-(v-lo)/(hi2-lo+1e-9)*102).toFixed(1)).join(" "));
+ }
+ $("tape").innerHTML=tape.map(x=>`<div class="t"><span>${x.t}</span><span class="${x.sell?"dn":"up"}">${x.sell?"JUAL":"BELI"} ${x.q.toFixed(4)}</span><span>${fmt(x.p)}</span></div>`).join("")||'<div class="t">menunggu trade...</div>';
+}
+
+history().then(()=>{connect();setInterval(render,400)});
+</script></body></html>
